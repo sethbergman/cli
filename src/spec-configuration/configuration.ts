@@ -6,6 +6,7 @@
 import * as path from 'path';
 import { URI } from 'vscode-uri';
 import { FileHost, parentURI, uriToFsPath } from './configurationCommonUtils';
+import { Mount } from './containerFeaturesConfiguration';
 import { RemoteDocuments } from './editableFiles';
 
 export type DevContainerConfig = DevContainerFromImageConfig | DevContainerFromDockerfileConfig | DevContainerFromDockerComposeConfig;
@@ -20,15 +21,26 @@ export type UserEnvProbe = 'none' | 'loginInteractiveShell' | 'interactiveShell'
 
 export type DevContainerConfigCommand = 'initializeCommand' | 'onCreateCommand' | 'updateContentCommand' | 'postCreateCommand' | 'postStartCommand' | 'postAttachCommand';
 
+export interface HostGPURequirements {
+	cores?: number;
+	memory?: string;
+}
+
 export interface HostRequirements {
 	cpus?: number;
 	memory?: string;
 	storage?: string;
+	gpu?: boolean | 'optional' | HostGPURequirements;
+}
+
+export interface DevContainerFeature {
+	userFeatureId: string;
+	options: boolean | string | Record<string, boolean | string | undefined>;
 }
 
 export interface DevContainerFromImageConfig {
-	configFilePath: URI;
-	image: string;
+	configFilePath?: URI;
+	image?: string; // Only optional when setting up an existing container as a dev container.
 	name?: string;
 	forwardPorts?: (number | string)[];
 	appPort?: number | string | (number | string)[];
@@ -47,15 +59,21 @@ export interface DevContainerFromImageConfig {
 	/** remote path to folder or workspace */
 	workspaceFolder?: string;
 	workspaceMount?: string;
-	mounts?: string[];
+	mounts?: (Mount | string)[];
 	containerEnv?: Record<string, string>;
-	remoteEnv?: Record<string, string | null>;
 	containerUser?: string;
+	init?: boolean;
+	privileged?: boolean;
+	capAdd?: string[];
+	securityOpt?: string[];
+	remoteEnv?: Record<string, string | null>;
 	remoteUser?: string;
 	updateRemoteUserUID?: boolean;
 	userEnvProbe?: UserEnvProbe;
 	features?: Record<string, string | boolean | Record<string, string | boolean>>;
+	overrideFeatureInstallOrder?: string[];
 	hostRequirements?: HostRequirements;
+	customizations?: Record<string, any>;
 }
 
 export type DevContainerFromDockerfileConfig = {
@@ -78,15 +96,21 @@ export type DevContainerFromDockerfileConfig = {
 	/** remote path to folder or workspace */
 	workspaceFolder?: string;
 	workspaceMount?: string;
-	mounts?: string[];
+	mounts?: (Mount | string)[];
 	containerEnv?: Record<string, string>;
-	remoteEnv?: Record<string, string | null>;
 	containerUser?: string;
+	init?: boolean;
+	privileged?: boolean;
+	capAdd?: string[];
+	securityOpt?: string[];
+	remoteEnv?: Record<string, string | null>;
 	remoteUser?: string;
 	updateRemoteUserUID?: boolean;
 	userEnvProbe?: UserEnvProbe;
 	features?: Record<string, string | boolean | Record<string, string | boolean>>;
+	overrideFeatureInstallOrder?: string[];
 	hostRequirements?: HostRequirements;
+	customizations?: Record<string, any>;
 } & (
 		{
 			dockerFile: string;
@@ -95,6 +119,7 @@ export type DevContainerFromDockerfileConfig = {
 				target?: string;
 				args?: Record<string, string>;
 				cacheFrom?: string | string[];
+				options?: string[];
 			};
 		}
 		|
@@ -105,6 +130,7 @@ export type DevContainerFromDockerfileConfig = {
 				target?: string;
 				args?: Record<string, string>;
 				cacheFrom?: string | string[];
+				options?: string[];
 			};
 		}
 	);
@@ -128,12 +154,21 @@ export interface DevContainerFromDockerComposeConfig {
 	postAttachCommand?: string | string[];
 	waitFor?: DevContainerConfigCommand;
 	runServices?: string[];
+	mounts?: (Mount | string)[];
+	containerEnv?: Record<string, string>;
+	containerUser?: string;
+	init?: boolean;
+	privileged?: boolean;
+	capAdd?: string[];
+	securityOpt?: string[];
 	remoteEnv?: Record<string, string | null>;
 	remoteUser?: string;
 	updateRemoteUserUID?: boolean;
 	userEnvProbe?: UserEnvProbe;
 	features?: Record<string, string | boolean | Record<string, string | boolean>>;
+	overrideFeatureInstallOrder?: string[];
 	hostRequirements?: HostRequirements;
+	customizations?: Record<string, any>;
 }
 
 interface DevContainerVSCodeConfig {
@@ -142,7 +177,11 @@ interface DevContainerVSCodeConfig {
 	devPort?: number;
 }
 
-export function updateFromOldProperties<T extends DevContainerConfig & DevContainerVSCodeConfig & { customizations?: { vscode?: DevContainerVSCodeConfig } }>(original: T): T {
+export interface VSCodeCustomizations {
+	vscode?: DevContainerVSCodeConfig;
+}
+
+export function updateFromOldProperties<T extends DevContainerConfig & DevContainerVSCodeConfig & { customizations?: VSCodeCustomizations }>(original: T): T {
 	// https://github.com/microsoft/dev-container-spec/issues/1
 	if (!(original.extensions || original.settings || original.devPort !== undefined)) {
 		return original;

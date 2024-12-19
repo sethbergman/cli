@@ -15,6 +15,8 @@ This CLI is in active development. Current status:
 - [x] `devcontainer run-user-commands` - Runs lifecycle commands like `postCreateCommand`
 - [x] `devcontainer read-configuration` - Outputs current configuration for workspace
 - [x] `devcontainer exec` - Executes a command in a container with `userEnvProbe`, `remoteUser`, `remoteEnv`, and other properties applied
+- [x] `devcontainer features <...>` - Tools to assist in authoring and testing [Dev Container Features](https://containers.dev/implementors/features/)
+- [x] `devcontainer templates <...>` - Tools to assist in authoring and testing [Dev Container Templates](https://containers.dev/implementors/templates/)
 - [ ] `devcontainer stop` - Stops containers
 - [ ] `devcontainer down` - Stops and deletes containers
 
@@ -40,6 +42,8 @@ Commands:
   devcontainer build [path]         Build a dev container image
   devcontainer run-user-commands    Run user commands
   devcontainer read-configuration   Read configuration
+  devcontainer features             Features commands
+  devcontainer templates            Templates commands
   devcontainer exec <cmd> [args..]  Execute a command on a running dev container
 
 Options:
@@ -98,6 +102,14 @@ Hello, VS Code Remote - Containers!
 
 Congrats, you've just run the dev container CLI and seen it in action!
 
+## More CLI examples
+
+The [example-usage](./example-usage) folder contains some simple shell scripts to illustrate how the CLI can be used to:
+
+- Inject tools for use inside a development container
+- Use a dev container as your CI build environment to build an application (even if it is not deployed as a container)
+- Build a container image from a devcontainer.json file that includes [dev container features](https://containers.dev/implementors/features/#devcontainer-json-properties)
+
 ## Build from sources
 
 This repository has a [dev container configuration](https://github.com/devcontainers/cli/tree/main/.devcontainer), which you can use to ensure you have the right dependencies installed.
@@ -123,9 +135,13 @@ Learn more on the [dev container spec website](https://devcontainers.github.io/)
 
 You may review other resources part of the specification in the [`devcontainers` GitHub organization](https://github.com/devcontainers).
 
+### Documentation
+
+- Additional information on using the built-in [Features testing command](./docs/features/test.md).
+
 ## Contributing
 
-Check out how to contribute to the CLI in [CONTRIBUTING.md](contributing.md).
+Check out how to contribute to the CLI in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

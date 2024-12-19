@@ -9,31 +9,33 @@ import * as jsonc from 'jsonc-parser';
 
 import { openDockerfileDevContainer } from './singleContainer';
 import { openDockerComposeDevContainer } from './dockerCompose';
-import { ResolverResult, DockerResolverParameters, isDockerFileConfig, runUserCommand, createDocuments, getWorkspaceConfiguration, BindMountConsistency, uriToFsPath, DevContainerAuthority, isDevContainerAuthority } from './utils';
-import { substitute } from '../spec-common/variableSubstitution';
+import { ResolverResult, DockerResolverParameters, isDockerFileConfig, runInitializeCommand, getWorkspaceConfiguration, BindMountConsistency, uriToFsPath, DevContainerAuthority, isDevContainerAuthority, SubstituteConfig, SubstitutedConfig, addSubstitution, envListToObj, findContainerAndIdLabels } from './utils';
+import { beforeContainerSubstitute, substitute } from '../spec-common/variableSubstitution';
 import { ContainerError } from '../spec-common/errors';
 import { Workspace, workspaceFromPath, isWorkspacePath } from '../spec-utils/workspaces';
 import { URI } from 'vscode-uri';
 import { CLIHost } from '../spec-common/commonUtils';
 import { Log } from '../spec-utils/log';
 import { getDefaultDevContainerConfigPath, getDevContainerConfigPathIn } from '../spec-configuration/configurationCommonUtils';
-import { DevContainerConfig, updateFromOldProperties } from '../spec-configuration/configuration';
+import { DevContainerConfig, DevContainerFromDockerComposeConfig, DevContainerFromDockerfileConfig, DevContainerFromImageConfig, updateFromOldProperties } from '../spec-configuration/configuration';
+import { ensureNoDisallowedFeatures } from './disallowedFeatures';
+import { DockerCLIParameters } from '../spec-shutdown/dockerUtils';
+import { createDocuments } from '../spec-configuration/editableFiles';
 
-export { getWellKnownDevContainerPaths as getPossibleDevContainerPaths } from '../spec-configuration/configurationCommonUtils';
 
-export async function resolve(params: DockerResolverParameters, configFile: URI | undefined, overrideConfigFile: URI | undefined, idLabels: string[]): Promise<ResolverResult> {
+export async function resolve(params: DockerResolverParameters, configFile: URI | undefined, overrideConfigFile: URI | undefined, providedIdLabels: string[] | undefined, additionalFeatures: Record<string, string | boolean | Record<string, string | boolean>>): Promise<ResolverResult> {
 	if (configFile && !/\/\.?devcontainer\.json$/.test(configFile.path)) {
 		throw new Error(`Filename must be devcontainer.json or .devcontainer.json (${uriToFsPath(configFile, params.common.cliHost.platform)}).`);
 	}
 	const parsedAuthority = params.parsedAuthority;
 	if (!parsedAuthority || isDevContainerAuthority(parsedAuthority)) {
-		return resolveWithLocalFolder(params, parsedAuthority, configFile, overrideConfigFile, idLabels);
+		return resolveWithLocalFolder(params, parsedAuthority, configFile, overrideConfigFile, providedIdLabels, additionalFeatures);
 	} else {
 		throw new Error(`Unexpected authority: ${JSON.stringify(parsedAuthority)}`);
 	}
 }
 
-async function resolveWithLocalFolder(params: DockerResolverParameters, parsedAuthority: DevContainerAuthority | undefined, configFile: URI | undefined, overrideConfigFile: URI | undefined, idLabels: string[]): Promise<ResolverResult> {
+async function resolveWithLocalFolder(params: DockerResolverParameters, parsedAuthority: DevContainerAuthority | undefined, configFile: URI | undefined, overrideConfigFile: URI | undefined, providedIdLabels: string[] | undefined, additionalFeatures: Record<string, string | boolean | Record<string, string | boolean>>): Promise<ResolverResult> {
 	const { common, workspaceMountConsistencyDefault } = params;
 	const { cliHost, output } = common;
 
@@ -52,18 +54,25 @@ async function resolveWithLocalFolder(params: DockerResolverParameters, parsedAu
 			throw new ContainerError({ description: `No dev container config and no workspace found.` });
 		}
 	}
-	const config = configs.config;
+	const idLabels = providedIdLabels || (await findContainerAndIdLabels(params, undefined, providedIdLabels, workspace?.rootFolderPath, configPath?.fsPath, params.removeOnStartup)).idLabels;
+	const configWithRaw = addSubstitution(configs.config, config => beforeContainerSubstitute(envListToObj(idLabels), config));
+	const { config } = configWithRaw;
 
-	await runUserCommand({ ...params, common: { ...common, output: common.postCreate.output } }, config.initializeCommand, common.postCreate.onDidInput);
+	const { dockerCLI, dockerComposeCLI } = params;
+	const { env } = common;
+	const cliParams: DockerCLIParameters = { cliHost, dockerCLI, dockerComposeCLI, env, output, platformInfo: params.platformInfo };
+	await ensureNoDisallowedFeatures(cliParams, config, additionalFeatures, idLabels);
+
+	await runInitializeCommand({ ...params, common: { ...common, output: common.lifecycleHook.output } }, config.initializeCommand, common.lifecycleHook.onDidInput);
 
 	let result: ResolverResult;
 	if (isDockerFileConfig(config) || 'image' in config) {
-		result = await openDockerfileDevContainer(params, config, configs.workspaceConfig, idLabels);
+		result = await openDockerfileDevContainer(params, configWithRaw as SubstitutedConfig<DevContainerFromDockerfileConfig | DevContainerFromImageConfig>, configs.workspaceConfig, idLabels, additionalFeatures);
 	} else if ('dockerComposeFile' in config) {
 		if (!workspace) {
 			throw new ContainerError({ description: `A Dev Container using Docker Compose requires a workspace folder.` });
 		}
-		result = await openDockerComposeDevContainer(params, workspace, config, idLabels);
+		result = await openDockerComposeDevContainer(params, workspace, configWithRaw as SubstitutedConfig<DevContainerFromDockerComposeConfig>, idLabels, additionalFeatures);
 	} else {
 		throw new ContainerError({ description: `Dev container config (${(config as DevContainerConfig).configFilePath}) is missing one of "image", "dockerFile" or "dockerComposeFile" properties.` });
 	}
@@ -82,13 +91,14 @@ export async function readDevContainerConfigFile(cliHost: CLIHost, workspace: Wo
 		throw new ContainerError({ description: `Dev container config (${uriToFsPath(configFile, cliHost.platform)}) must contain a JSON object literal.` });
 	}
 	const workspaceConfig = await getWorkspaceConfiguration(cliHost, workspace, updated, mountWorkspaceGitRoot, output, consistency);
-	const config: DevContainerConfig = substitute({
+	const substitute0: SubstituteConfig = value => substitute({
 		platform: cliHost.platform,
 		localWorkspaceFolder: workspace?.rootFolderPath,
 		containerWorkspaceFolder: workspaceConfig.workspaceFolder,
 		configFile,
 		env: cliHost.env,
-	}, updated);
+	}, value);
+	const config: DevContainerConfig = substitute0(updated);
 	if (typeof config.workspaceFolder === 'string') {
 		workspaceConfig.workspaceFolder = config.workspaceFolder;
 	}
@@ -97,7 +107,11 @@ export async function readDevContainerConfigFile(cliHost: CLIHost, workspace: Wo
 	}
 	config.configFilePath = configFile;
 	return {
-		config,
+		config: {
+			config,
+			raw: updated,
+			substitute: substitute0,
+		},
 		workspaceConfig,
 	};
 }
